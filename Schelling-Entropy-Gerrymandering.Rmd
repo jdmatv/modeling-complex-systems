@@ -1,0 +1,413 @@
+---
+title: "Schelling's Model, Entropy and Gerrymandering"
+author:
+- name: Author
+  affiliation: RAND Corporation
+date: "`r format(Sys.time(), '%B %d, %Y')`"
+#output: html_notebook
+output:
+  rmdformats::readthedown
+pandoc_args: --natbib
+biblio-style: plain
+editor_options: 
+  markdown: 
+    wrap: 72
+---
+
+```{r setup, include=FALSE, echo=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+remove(list = ls())
+# Needed packages to perform the analysis
+load <- function(pkg){
+  new.pkg <- pkg[!(pkg %in% installed.packages()[, "Package"])]
+  if (length(new.pkg))
+    install.packages(new.pkg, dependencies = TRUE, repos = "cran.rand.org")
+  sapply(pkg, require, character.only = TRUE)
+} 
+
+packages <- c("knitr","kableExtra","rmdformats","rmarkdown","dplyr","here","reshape2",
+              "deSolve","RefManageR","fitdistrplus","ggplot2","scales","ggthemes",
+              "rootSolve","shape","tidyr","igraph")
+
+
+load(packages)
+
+#library.dir   <- "Library/"
+#source(file.path(library.dir, "library.R"))
+
+### Specify directories 
+input.dir <- "Inputs/"
+output.dir <- "Outputs/"
+```
+
+# Introduction
+
+Schelling formulated a simple model of racial segregation to illustrate how individual perceptions of difference can lead collectively to segregation. He represented a geographical state as a grid, where each square patch on that grid represents a house. Initially, some houses are empty (white), and the remaining houses are randomly assigned to be either blue or pink. The proportion of occupied houses is $\rho_0$, given by the ratio of the number of occupied houses $N_0$ to the total number of patches $N$. The rules of the model are: 
+
+1. A patch can be empty ($s_i=0$, white) or occupied by one of two groups of individuals ($s_i=\pm 1$, blue/pink).
+
+2. An individual at patch $i$ stays "happy" if a fraction $f_i\ge F$ of neighbors are of the same group. If an individual has no neighbors, s/he is also "happy."
+
+3. An individual is "sad" if $f_i< F$ and will try to relocate to a suitable empty patch $j$ with $f_j\ge F$  irrespective of distance. The relocation occurs by moving to a randomly chosen empty patch.
+
+
+# Cases on a Small Grid 
+
+Let's consider a grid made by 3 patches by 3 patches with no periodic boundary conditions. Hence patches at a boundary only consider the internal patches as neighbors. Therefore the central patch will have eight neighbors, but the peripheral patches will have fewer neighbors, respectively 3 and 5, depending on whether they lie at a corner. 
+
+Let's consider three separate cases, where we have 2, 4, and 6 individuals in the system, and in each case, there is an equal number of blue and pink individuals and where $F=50\%$. In each case, we start from a random initial configuration, and the dynamics end when we reach a final stable configuration where all individuals are happy.  
+
+Without knowing the specific initial and final configurations for each of the three cases, compute their initial and final entropies. The code below will guide you through this problem and will solve the problem for the first case. 
+
+## Case 1
+
+We have nine patches in our 3 by 3 grid with one blue and one pink individual. The initial number of configurations is easily found by $\left( \begin{array}{c} 9 \\ 1\end{array} \right)\left( \begin{array}{c} 8 \\ 1\end{array} \right)=72$. However, we will verify this numerically:
+
+```{r}
+# Lets create a data frame containing all possible arrangments between empty and blue/pink occupied patches
+a <- as.data.frame(expand.grid(rep(list(c("0","B","P")),9))) 
+
+# Each row is a configuration. 
+# Let's add columns giving the number of blue and pink residents in each configuration  
+a$Bsum <- rowSums(a=="B")
+a$Psum <- rowSums(a=="P")
+
+# let's select the rows which contain just one blue and one pink configuration
+a1 <- a %>% 
+  filter(Bsum==1 & Psum==1) %>% 
+  dplyr::select(-Bsum,-Psum)
+# Let's see the number of initial configurations
+nrow(a1)
+```
+
+Now for the next part we need to create a graph of our connections in our 3 by 3 grid. We will use the package **igraph** to make our 3 by 3 grid. However, our grid does not include the diagonals as interactions, so we need to add these edges manually.  
+
+```{r}
+g <- make_lattice( c(3,3))%>%
+  add_edges(c(1,5, 2,4, 2,6, 3,5, 4,8, 5,7, 5,9, 6,8 )) 
+
+plot(g, vertex.color="lightblue", 
+     vertex.size=10, vertex.label=NA)
+```
+
+From the graph we obtain the adjacency matrix. 
+
+```{r}
+adj.M <- as.matrix(as_adjacency_matrix(g))
+print(adj.M)
+```
+
+Next, we use the adjacency matrix as an input to a function that determines if a configuration **x** specified by a vector of 9 elements is stable or not. The function is defined below. It first uses the adjacency matrix to compute the number of blue and pink neighbors for each of the nine patches. It then takes the difference between the number of blue and pink neighbors for each patch. If this difference is positive (negative) the patch is surrounded by a majority of blue (pink) neighbors. Hence, a blue (pink) individual on the patch will be happy if this difference is positive (negative) or is surrounded by empty patches. The above operation is performed for every patch in a vectorized way.        
+
+```{r}
+is.stable.config<-function(x,adj.M,above.F=TRUE){
+  # we assume F=50%.by default
+  
+  # number of neighbors that are Blue
+  nB <- ((x=="B") %*% adj.M) 
+  # number of neighbors that are Pink
+  nP <- ((x=="P") %*% adj.M)
+  
+  diff.BP.nei <- nB - nP
+  
+  # happiness score of sites hosting a blue
+  happy.B <- (x=="B")*diff.BP.nei
+  
+  # happiness score of sites hosting a pink
+  happy.P <- -(x=="P")*diff.BP.nei
+  
+  # Find the happiness score for each patch
+  h.score <- happy.B + happy.P 
+  
+  # Find the order parameter
+  order.parameter <-  sum(h.score)
+  
+  # Find stable configurations
+  stable.config <-as.logical(prod((h.score  + as.numeric(x==0))>=0))
+  # Note we make empty cells happy by default 
+  # so that they are not flagged as unhappy in our verification for stability
+  
+  R <- c(Odr=order.parameter,Stable=stable.config)
+  return(R)
+}
+```
+
+The function is called for each row in our data frame containing case 1 configurations to find which configuration is stable.  
+```{r}
+a1<- a1 %>% 
+  bind_cols(t( apply(a1,1,is.stable.config, 
+                  adj.M=adj.M))) 
+table(a1$Stable)
+```
+We find that 32 out of the original 72 configurations are stable. The function also outputs the order parameter for each configuration. 
+
+```{r}
+hist(a1$Odr)
+```
+
+
+## Cases 2 and 3
+
+Repeat the above calculations for cases 2 and 3. How many initial and final stable configurations do we have? Can a configuration have a positive order parameter and still not be stable? Use your tables and histograms to explain.
+
+### Answer Here
+
+For case 2, we can create the data frame in case 1 but with two blue and two pink individuals in the system as opposed to one blue and one pink. Analytically, there are $\left( \begin{array}{c} 9 \\ 2\end{array} \right)\left( \begin{array}{c} 7 \\ 2\end{array} \right)=756$ possible initial configurations. We can confirm this numerically by starting with the same code as part 1 and replacing *Bsum==1* and *Psum==1* with *Bsum==2* and *Psum==2* respectively.
+
+```{r}
+# let's select the rows in a which contain TWO blue and TWO pink configuration
+a2 <- a %>% 
+  filter(Bsum==2 & Psum==2) %>% 
+  dplyr::select(-Bsum,-Psum)
+# Let's see the number of initial configurations
+nrow(a2)
+```
+
+The adjacency matrix from case 1 remains unchanged as all the edges are same. We can use the same *is.stable.config* function to calculate how many final stable configurations there are.
+
+```{r}
+a2<- a2 %>% 
+  bind_cols(t( apply(a2,1,is.stable.config, 
+                  adj.M=adj.M))) 
+table(a2$Stable)
+hist(a2$Odr)
+```
+
+For the second case, there are 66 stable final configurations out of 756 possible configurations (~8.7%).  
+
+We can repeat the same process for case 3. Analytically, we can find the total number of possible initial configurations by solving $\left( \begin{array}{c} 9 \\ 3\end{array} \right)\left( \begin{array}{c} 6 \\ 3\end{array} \right)=1680$. Numerically, we can verify this value by selecting rows in the data frame of all possible arrangments between empty and blue/pink occupied patches which have 3 blue and 3 pink individuals.
+
+```{r}
+# let's select the rows in a which contain TWO blue and TWO pink configuration
+a3 <- a %>% 
+  filter(Bsum==3 & Psum==3) %>% 
+  dplyr::select(-Bsum,-Psum)
+# Let's see the number of initial configurations
+nrow(a3)
+```
+
+To calculate the number of final stable configurations, we again use the *is.stable.config* function.
+
+```{r}
+a3<- a3 %>% 
+  bind_cols(t( apply(a3,1,is.stable.config, 
+                  adj.M=adj.M))) 
+table(a3$Stable)
+hist(a3$Odr)
+```
+
+For case three, there are only 40 stable configurations out of 1680 possible (~0.8%). There are fewer stable configurations in case 2 than in case 1 and in case 3 than in case 2 because individuals on patches with only empty patches as neighbors are happy and there are fewer empty patches in each scenario.  
+
+Analytically, it seems reasonable to assume that it's possible for a configuration to have a positive order and still be unstable. The order parameter is the sum of the happiness scores of all occupied matches, and it could be positive even if some individuals are unhappy. For example, in a system containing 6 individuals and four being equally happy and two being inversely equally unhappy, the order would be positive, but the system would not be stable because the unhappy individuals would seek out different patches. It's unclear if such a configuration is possible given the constraints in case 1, 2, and 3.  
+
+To determine if it's possible for a configuration to have a positive order and still be unstable, we can plot the relationship between stability and order in each case.
+
+```{r}
+boxplot(a1$Odr ~ a1$Stable)
+boxplot(a2$Odr ~ a2$Stable)
+boxplot(a3$Odr ~ a3$Stable)
+```
+
+It appears that there are some unstable configurations in case 3 with positive order. We can look at the summary statistics of the order of unstable configurations of all three cases to see if there are any such cases.
+
+Case 1
+```{r}
+summary(subset(a3, Stable == 0)$Odr)
+```
+Case 2
+```{r}
+summary(subset(a2, Stable == 0)$Odr)
+```
+Case 3
+```{r}
+summary(subset(a3, Stable == 0)$Odr)
+```
+
+Only case 3 has unstable configurations with a positive order value. We can filter the data frame to find the number of unstable configurations with a positive order value.
+
+```{r}
+# filtering rows of case 3 configurations that are unstable and have positive order
+a3.unstable.odr <- a3 %>% 
+  filter(Stable == 0 & Odr>0) %>% 
+  dplyr::select(-Stable)
+nrow(a3.unstable.odr)
+```
+
+For case 3, there are 168 such possible configurations, which are unstable and have a positive order.
+
+# Entropy
+
+Recall that Shannon's entropy is given by \[H(\mathbf{p})= -\sum_{i=1}^N p_i \log_2 p_i.\] Here $p_i$ is the probability of a given configuration or microstate consistent with a given observable macrostate.  
+
+1. Assuming that all initial conditions are equally probable, use the number of microstates computed above to find Shannon's entropy in each case.
+
+2. Assuming that all stable conditions are equally probable, use the number of stable microstates computed above to find Shannon's entropy in each case.  
+
+The system's entropy seems to decrease. Is the system open, closed, or isolated? Briefly discuss how the entropy could have decreased.
+
+Assume that Alice prepares the system to randomly start as in one of these three cases with equal probability and in a random initial configuration. She runs the system until it reaches a stable configuration. She then observes the configuration and needs to communicate this to Bob, who knows how Alice set up the system. 
+
+What is the minimum integer number of bits of information needed by Alice to communicate the configuration to Bob? 
+
+Now assume that case 1 is twice as likely as either cases 2 and 3, which remain equally likely. If Bob also knows about this change, what is the new minimum integer number of bits of information that Alice needs to communicate the configuration to Bob?     
+
+## Answer Here
+
+The entropy can be found for each case using the above formula and computed microstates.
+
+```{r}
+# Case 1
+a1.mcrst <- nrow(a1) # number of microstates for case 1 start
+a1.stable <- sum(a1$Stable) # number of stable microstates for case 1
+a1.unstable <- a1.mcrst - a1.stable # number of unstable microstates for case 1
+
+# Case 2
+a2.mcrst <- nrow(a2) # number of microstates for case 2 start
+a2.stable <- sum(a2$Stable) # number of stable microstates for case 2
+a2.unstable <- a2.mcrst - a2.stable # number of unstable microstates for case 2
+
+# Case 3
+a3.mcrst <- nrow(a3) # number of microstates for case 3 start
+a3.stable <- sum(a3$Stable) # number of stable microstates for case 3
+a3.unstable <- a3.mcrst - a3.stable # number of unstable microstates for case 3
+
+# calculate entropy of each microstate at start of case
+a1.mcr.ent <- c()
+for (i in rep(1/a1.mcrst, times = a1.mcrst)) {
+  a1.mcr.ent <- c( a1.mcr.ent, (i) * log2(i) )
+}
+
+a2.mcr.ent <- c()
+for (i in rep(1/a2.mcrst, times = a2.mcrst)) {
+  a2.mcr.ent <- c( a2.mcr.ent, (i) * log2(i) )
+}
+
+a3.mcr.ent <- c()
+for (i in rep(1/a3.mcrst, times = a3.mcrst)) {
+  a3.mcr.ent <- c( a3.mcr.ent, (i) * log2(i) )
+}
+
+a1.init.entropy = -sum(a1.mcr.ent)
+a2.init.entropy = -sum(a2.mcr.ent)
+a3.init.entropy = -sum(a3.mcr.ent)
+```
+
+Case 1
+```{r}
+a1.init.entropy
+```
+Case 2
+```{r}
+a2.init.entropy
+```
+Case 3
+```{r}
+a3.init.entropy
+```
+
+We can follow the same process to find the entropy of each case using the number of stable microstates.
+
+```{r}
+# Case 1
+a1.stb.mcr.ent <- c()
+for (i in rep(1/a1.stable, times = a1.stable)) {
+  a1.stb.mcr.ent <- c( a1.stb.mcr.ent, (i) * log2(i) )
+}
+
+a1.stb.entropy = -sum(a1.stb.mcr.ent)
+
+# Case 2
+a2.stb.mcr.ent <- c()
+for (i in rep(1/a2.stable, times = a2.stable)) {
+  a2.stb.mcr.ent <- c( a2.stb.mcr.ent, (i) * log2(i) )
+}
+
+a2.stb.entropy = -sum(a2.stb.mcr.ent)
+
+# Case 3
+a3.stb.mcr.ent <- c()
+for (i in rep(1/a3.stable, times = a3.stable)) {
+  a3.stb.mcr.ent <- c( a3.stb.mcr.ent, (i) * log2(i) )
+}
+
+a3.stb.entropy = -sum(a3.stb.mcr.ent)
+```
+
+
+
+Case 1
+```{r}
+a1.stb.entropy
+```
+Case 2
+```{r}
+a2.stb.entropy
+```
+Case 3
+```{r}
+a3.stb.entropy
+```
+
+
+
+The system is isolated. There are no individuals exiting or entering the system after the initial state, and there are no other factors, information, or energy exiting or entering the system that has an effect on the individuals in the system. The entropy decreases once the system reaches a steady-state that is stable because there are few microstate configurations that produce a stable macrostate, and so the uncertainty in the set of microstates at the steady-state is much lower than at the system's start (it is a subsystem of the larger system of all possible configurations). Thus, the overall system's entropy hasn't changed, but the entropy of the subsystem of stable configurations is lower than the entropy of the overall system's entropy.
+
+Assume that Alice prepares the system to randomly start as in one of these three cases with equal probability and in a random initial configuration. She runs the system until it reaches a stable configuration. She then observes the configuration and needs to communicate this to Bob, who knows how Alice set up the system. 
+
+What is the minimum integer number of bits of information needed by Alice to communicate the configuration to Bob? 
+
+Now assume that case 1 is twice as likely as either cases 2 and 3, which remain equally likely. If Bob also knows about this change, what is the new minimum integer number of bits of information that Alice needs to communicate the configuration to Bob?     
+
+Alice needs to communicate the microstate configuration of the stable configuration that she reaches. Case 1 has 32 stable microstates. Case 2 has 66, and case 3 has 40. Assuming that in each case the various configurations of the stable microstates have an equal probability of occurring, Alice has a 1/3 chance of communicating an event with a probability of 1/32, a 1/3 chance of communicating an event with a probability of 1/66, and a 1/3 chance of communicating an event with a probability of 1/40. We can find the average number of bits needed to encode the information in a data source using Shannon's Entropy formula: 
+$$
+H(\mathbf{p}) = -\sum^{N}_{i=1}p_i \log_2{p_i} \\
+H(\mathbf{p}) = -\sum^{32}_{i=1} \Big(\frac{1}{96}\Big) \log_2\Big(\frac{1}{96}\Big) -\sum^{66}_{j=1} \Big(\frac{1}{198}\Big) \log_2\Big(\frac{1}{198}\Big) -\sum^{40}_{k=1} \Big(\frac{1}{120}\Big) \log_2\Big(\frac{1}{120}\Big)  
+$$
+```{r}
+- 32*((1/96))*log2((1/96)) - 66*((1/198))*log2((1/198)) - 40*((1/120))*log2((1/120))
+```
+Thus, we would need at least 8 bits of information to communicate the configuration to Bob because it wouldn't be possible to round down integer bits.
+
+If we assume that case 1 is twice as likely as either 2 and 3, the formula becomes the following:
+$$
+H(\mathbf{p}) = -\sum^{32}_{i=1} \Big(\frac{1}{64}\Big) \log_2\Big(\frac{1}{64}\Big) -\sum^{66}_{j=1} \Big(\frac{1}{264}\Big) \log_2\Big(\frac{1}{264}\Big) -\sum^{40}_{k=1} \Big(\frac{1}{160}\Big) \log_2\Big(\frac{1}{160}\Big)  
+$$
+```{r}
+- 32*((1/64))*log2((1/64)) - 66*((1/264))*log2((1/264)) - 40*((1/160))*log2((1/160))
+```
+In this case, Alice would only need 7 bits of information to communicate the configuration to Bob.
+
+# Schelling’s Model in Netlogo
+
+Go through Schelling's Model in Netlogo called Segregation. Make sure you understand the code and explore the model by changing the density ($\rho$) and the \%-SIMILAR-WANTED ($F$) inputs.
+
+1. What are the $\rho$ and $F$ conditions for a final segregated outcome? 
+
+2. What are the $\rho$ and $F$ conditions for the system never to reach a final stable state?
+
+## Answer Here
+
+Please provide your answer here. Note do not spend too much time on this - manual experimentation is suitable. The purpose is to get a feel of the model. 
+
+At a $\rho$ density level of 75%, $F$ values above 75% often lead to the system never reaching a final stable state and not having a final segregated outcome. This appears to hold true for all density levels above 75%, but is not the case when the $\rho$ is below 75%. When $\rho$ and $F$ are below 75%, the system typically reaches a final segregated outcome. When $F$ is above 85%, the system tends to not reach a final stable state, even if $\rho$ is low. The inverse relationship does not appear to be true as high $\rho$ values leads to a final stable state when $F$ is low (e.g. less than 75%).
+
+# Gerrymandering
+
+We can extend the model to look at Gerrymandering. Go through the description given in the link https://davidlowryduda.com/segregation-gerrymandering-and-schellings-model/. Starting from the modified code *Segregation-Gerrymandering-HW.nlogo*, develop the model by following the same approach:
+
+1. Patches can be grouped into rectangular areas of exactly or roughly equal size. These represent different districts. 
+2. For each district, find the winning group (i.e., blue or pink) and calculate the blue, the pink, and the net wasted votes as given by the table in the link. 
+3. In Netlogo, provide an output for the overall *Efficiency Gap* as defined in the link. 
+4. Describe how the Efficiency Gap depends on the inputs $\rho$ and $F$.
+
+**Optional:** For this part of the homework you can use the **nlrx** package for some bonus marks. Please refer to the R-nlrx-Segregation-HW.Rmd notebook to assist you with this. 
+
+## Answer Here
+
+See Netlogo file attached. 
+
+Altough the initial net wasted votes have greater variance at the start of the model when the density $\rho$ is greater becuase there are more individuals in the system, the initial efficiency gap does not seem to depend on $\rho$ as it is normalized by the number of individuals in the system. It appears visually that as the system approaches segregation, the efficiency gap approaches 0. In general, it looks like when $\rho$ increases, segregation patterns are stronger, and the efficiency gap converges to 0 more often. When $F$ is high, there appears to be more oscillation in the efficiency gap between positive and negative values, and it is less likely to reach a steady state.
+
+
+
+

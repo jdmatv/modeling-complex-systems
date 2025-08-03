@@ -1,0 +1,251 @@
+---
+title: "Replicator Dynamics"
+author:
+- name: Joseph Matveyenko (assignment written by Raff Vardavas)
+  affiliation: RAND Corporation
+#bibliography: 
+date: "`r format(Sys.time(), '%B %d, %Y')`"
+#output: html_notebook
+output:
+  rmdformats::readthedown
+pandoc_args: --natbib
+biblio-style: plain
+---
+
+```{r setup, include=FALSE, echo=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+remove(list = ls())
+
+# If you don't have baryplot package installed, run the following two commands:
+#options(repos=c(getOption("repos"),baryplot="http://xcelab.net/R"))
+#install.packages("baryplot",type="source")
+
+# Needed packages to perform the analysis
+load <- function(pkg){
+  new.pkg <- pkg[!(pkg %in% installed.packages()[, "Package"])]
+  if (length(new.pkg))
+    install.packages(new.pkg, dependencies = TRUE)
+  sapply(pkg, require, character.only = TRUE)
+} 
+
+packages <- c("knitr","kableExtra","rmdformats","rmarkdown","dplyr","here","reshape2", "deSolve","rootSolve","baryplot", "RefManageR","fitdistrplus","ggplot2","scales","ggthemes")
+
+
+
+load(packages)
+
+library.dir   <- "Library/"
+source(file.path(library.dir, "library.R"))
+
+### Specify directories 
+input.dir <- "Inputs/"
+output.dir <- "Outputs/"
+```
+
+# Introduction
+
+The replicator equation is a deterministic monotone, non-linear and non-innovative game dynamic used in evolutionary game theory. It allows the fitness function to incorporate the distribution of the population types rather than setting the fitness to a constant value of a particular type. This critical property allows the replicator equation to capture the essence of selection.
+
+This Notebook provides an example replicator dynamics model.
+
+# Define the Replicator Equation
+
+The replicator equation is $$\dot{x}_i= x_i(f_i-\phi) = x_i\left(\sum_{j=1}^n a_{ij}x_j-\phi\right),$$ where $f_i = \sum_{j=1}^n a_{ij}x_j$ is a frequency-dependent fitness and the average fitness $\phi= \sum_i x_i f_i = \mathbf{x\cdot(A\cdot x)}$, and $\mathbf{A}=[a_{ij}]$ is called a payoff matrix. Or equivalently $\dot{\mathbf{x}} = \mathbf{x}[ \mathbf{A}\cdot \mathbf{x}- \phi \mathbf{I}]$.
+
+```{r echo=TRUE}
+replicator.eq <-function(t,x,parms){
+  A<- parms
+  v <- as.vector(x)
+  dx <- v*(A%*%v-as.numeric(v%*%A%*%v))
+  list(as.numeric(dx) )    # the rate of change
+}
+```
+
+# The Simplex
+
+The set of points with the property $\sum_{i=1}^n x_i =1$ is called the Simplex $S_n$. We can run the dynamics from any initial condition in the simplex interior, leading to a vertex point representing a single population type. The Interior of the simplex is the set of all points where all coordinates are strictly positive, and thus no type has become extinct. The faces or edges are the set of points where at least one type is extinct. A vertex is the set of points where all but one type have become extinct.
+
+We define a Simplex plot function for our purpose using the *baryplot* package.
+
+```{r echo=TRUE}
+plot.EG.on.S3 <- function(out,initialize.plot=TRUE, arrow=TRUE, n.arrows= 6, labels=c("Hawk","Retaliator","Dove")) {
+  
+  if(initialize.plot){
+    bary.init()
+    text(0, 0, labels[1], xpd = NA, adj = c(1, 1.5))
+    text(1, 0, labels[2], xpd = NA, adj = c(0, 1.5))
+    text(0.5,1,labels[3], xpd = NA, adj = c(0.5, 2))
+  }
+  
+  deltat<- as.numeric(out[2,1]-out[1,1])
+  tf <- as.numeric(max(out[,1]))
+  total.points <- tf/deltat
+  arrows.at.intervals <- round(total.points/n.arrows,0)
+  
+  for(t in 2:nrow(out)) {
+    origin <- as.numeric(out[t-1,2:3])
+    newpt <- as.numeric(out[t,2:3])
+    acolor <- "black"
+    arrow.flag <- TRUE
+    bary.line(origin, newpt, arrow = (t%%arrows.at.intervals==0), col = acolor)
+  }
+  return(NULL)  
+}
+```
+
+# Define the Payoff Matrix
+
+We will model a population that repeats the Rock-Paper-Scissors Game. The payoff matrix is given by
+
+$$
+\begin{array}{cccc)}
+& R& P & S\\
+ R &0 & -1 & 1  \\
+ P& 1 & 0 & -1 \\
+ S& -1 & 1 & 0 \\
+\end{array}$$
+
+```{r echo=TRUE}
+A <- t(matrix(c(0,1,-1,-1,0,1,1,-1,0),3,3))
+print(A)
+```
+
+# Integrate the Dynamics
+
+We can integrate the model starting from a population who plays rock paper and scissors of 1 to 3 to 8.
+
+```{r echo=TRUE}
+pop <- c(1,3,8)
+pop <- as.vector(pop /sum(pop))
+
+times  <-seq(0,20,0.1)
+out    <-as.data.frame(ode(pop,times,func=replicator.eq,parms=A))
+```
+
+We plot the dynamics on the $S_3$ simplex.
+
+```{r echo=TRUE}
+plot.EG.on.S3(out,initialize.plot=TRUE, labels=c("Rock","Scissors","Paper"))
+```
+
+We can generate additional orbits by starting from a different initial condition.
+
+```{r echo=TRUE}
+plot.EG.on.S3(out,initialize.plot=TRUE, labels=c("Rock","Scissors","Paper"))
+
+## add a new orbit
+pop <- c(3,3,2)
+pop <- as.vector(pop /sum(pop))
+times  <-seq(0,20,0.1)
+out    <-as.data.frame(ode(pop,times,func=replicator.eq,parms=A))
+plot.EG.on.S3(out,initialize.plot=F)
+```
+
+# Assignment 2 Part 1: Hawks-Doves Game
+
+## Replicator Equation and Hawks and Doves
+
+Note this is the same question in the Assignment2.pdf.
+
+Consider a population of Hawks ($H$) and Doves ($D$) in a shared ecosystem with fixed resources such that $$\dot{H}=r_HH$$ $$\dot{D}=r_DD$$
+
+Let $x=H/(H+D)$. Find the population average growth rate $r$ as a function of $x, r_H$ and $r_D$, and show that $\dot{x}=(r_H-r_D)x(1-x) = x(r_H-r)$. (The replicator equation)
+
+The variable $x$ is the proportion of Hawks in the population, while $(1-x)$ is the proportion of Doves in the population. Thus, the population average growth rate $r$ can be described as:
+$$r=x*r_H+(1-x)*r_D$$
+It follows that $\dot{x}$ can be represented as:
+\begin{align*}
+  \dot{x}&=\frac{d}{dt}\Big(\frac{H}{H+D}\Big)\\[0.5 em]
+  &= \frac{\dot{H}(H+D)-H(\dot{H}+\dot{D})}{(H+D)^2}\\[0.5 em]
+  &= \frac{r_H H H + r_H H D - r_H H H - r_D D H}{(H+D)^2}\\[0.5 em]
+  &= \frac{DH (r_H-r_D)}{(H+D)^2}\\[0.4 em]
+  &= (r_H-r_D) \frac{H}{H+D} \frac{D}{H+D} \\[0.5 em]
+  &= (r_H-r_D) x(1-x)\\
+\end{align*}
+\
+Next, we can check if $\dot{x}=(r_H-r_D)x(1-x)$ is equivalent to $x(r_H-r)$.
+\begin{align*}
+  (r_H-r_D)x(1-x) &\stackrel{?}{=} x(r_H-r) \\[0.3 em]
+  (r_H-r_D)x(1-x) &\stackrel{?}{=} x\big(r_H-(x*r_H+(1-x)*r_D)\big) \\[0.3 em]
+  r_D*x^2-r_H*x^2+r_H*x - r_D*x &= r_D*x^2 - r_H*x^2+ r_H*x  - r_D*x\\
+\end{align*}
+\
+Therefore, $\dot{x}=(r_H-r_D)x(1-x) = x(r_H-r)$.
+\
+\
+
+Find the probability that a Hawk encounters another Hawk rather than a Dove. (Assume mass-action - i.e., random mixing.)
+
+The probability that a Hawk encounters another Hawk rather than a Dove is equivalent to
+$$\frac{H-1}{H+D-1}$$
+
+Assume that the growth rates are such that $$
+\begin{array}{ccc)}
+(r_H,r_D)& Hawk & Dove \\
+ Hawk & (-0.5,-0.5) & (2,0)   \\
+ Dove & (0,2) & (1,1)  \\
+\end{array}$$
+
+Thus the reward payoff $G=2$ and the escalation cost $C=0.5$.
+
+1.  How does the expected value for $r_H$ and $r_D$ depend on $x$?
+
+The expected value for a Hawk is $\big(\frac{H-1}{H+D-1}\big)\begin{pmatrix} -0.5 & -0.5 \end{pmatrix}+\big(\frac{D}{H+D-1}\big)\begin{pmatrix} 2 & 0 \end{pmatrix}$, while the expected value for a Dove is $\big(\frac{H}{H+D-1}\big)\begin{pmatrix} 0 & 2 \end{pmatrix}+\big(\frac{D-1}{H+D-1}\big)\begin{pmatrix} 1 & 1 \end{pmatrix}$
+
+\
+For Hawks, simplifying gives $\begin{pmatrix}\frac{2D-0.5H+0.5}{H+D-1} & \frac{-0.5H+0.5}{H+D-1} \end{pmatrix}$, while for Doves, simplifying gives $\begin{pmatrix}\frac{D-1}{H+D-1} & \frac{2H+D-1}{H+D-1}\end{pmatrix}$
+\
+
+Therefore the expected values of $r_H$ and $r_D$ are:
+$$
+r_H = \Big(\frac{H}{H+D}\Big) \Big(\frac{2D-0.5H+0.5}{H+D-1}\Big) + \Big(\frac{D}{H+D}\Big) \Big(\frac{D-1}{H+D-1}\Big)$$
+$$
+r_D = \Big(\frac{H}{H+D}\Big) \Big(\frac{-0.5H+0.5}{H+D-1}\Big) + \Big(\frac{D}{H+D}\Big) \Big( \frac{2H+D-1}{H+D-1} \Big)
+$$
+and in more general terms:
+$$
+r_H = \frac{x(G*D-C*H+C)+(1-x)(D-1)}{H+D-1}$$
+$$
+r_D = \frac{x(C-C*H)+(1-x)(G*H+D-1)}{H+D-1}
+$$
+where both equations are dependent on $x$.
+\
+
+2.  Derive the Hawk-Dove differential equation - i.e., what is $\dot{x}$?
+\
+
+
+Starting with the equations for $r_H$ and $r_D$ above, we can derive an equation for the average expected value of $r$
+\begin{align*}
+  r &= x\bigg( \frac{x(G*D-C*H+C)+(1-x)(D-1)}{H+D-1}\bigg) + (1-x)\bigg( \frac{x(C-C*H)+(1-x)(G*H+D-1)}{H+D-1} \bigg)\\[0.6 em]
+  &= \frac{x\big[ x(G*D-C*H+C)+(1-x)(D-1) \big] + (1-x)\big[ x(C-C*H)+(1-x)(G*H+D-1) \big]}{H+D-1}
+\end{align*}
+\
+
+Substituting $r_H$ and $r_D$ into the replicator equation gives:
+\begin{align*}
+  \dot{x} &= x(r_H-r)\\[0.3 em]
+  &= x(1-x)\bigg(\frac{x(G*D-C*H+C)+(1-x)(D-1) + x(C-C*H)+(1-x)(G*H+D-1)}{H+D-1}\bigg)\\[0.6 em]
+  %&=x(1-x)\bigg(\frac{ x(-G*D)+(x-1)(G*H) }{H+D-1}\bigg)\\
+\end{align*}
+
+## Hawks-Doves-Retaliator Game
+
+This question is for extra credit. You do not need to provide an answer unless you'd like to work on it.
+
+Consider two population types:
+
+1.  H Hawks escalate a fight until the injury of one contestant settles the outcome.
+2.  D Doves stick to some conventional display and take flight if the adversary escalates.
+
+The winner is rewarded with a payoff of $G$. An escalation has a cost $C$. A flight has $0$ cost.
+
+Now consider introducing a third population or strategy, Retaliator, which escalates only if its adversary escalates. That is, Retaliator usually plays Dove but plays Hawk against other Hawks. The payoff to a Retaliator is thus equal to that of a Hawk when playing a Hawk. It is equal to that of a Dove when playing Doves or itself.
+
+3.  A Retaliator act as Dove unless faced with a Hawk, in which case it acts as a Hawk.
+
+Find the payoff matrix and modify the code to the Rock-Paper-Scissors game found above to answer the following:
+
+1.  With repeated interactions, is there an equilibrium population ratio?
+2.  What is the optimal strategy?
+3.  Does it depend on the initial population distribution?

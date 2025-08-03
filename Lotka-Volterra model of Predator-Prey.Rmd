@@ -1,0 +1,334 @@
+---
+title: "Lotka-Volterra model of Predator-Prey"
+author:
+- name: Joseph Matveyenko (assignment by Raff Vardavas)
+  affiliation: RAND Corporation
+#bibliography: 
+date: "`r format(Sys.time(), '%B %d, %Y')`"
+#output: html_notebook
+output:
+  rmdformats::readthedown
+pandoc_args: --natbib
+biblio-style: plain
+---
+
+```{r setup, include=FALSE, echo=FALSE}
+knitr::opts_chunk$set(echo = FALSE, warning = FALSE)
+remove(list = ls())
+# Needed packages to perform the analysis
+load <- function(pkg){
+  new.pkg <- pkg[!(pkg %in% installed.packages()[, "Package"])]
+  if (length(new.pkg))
+    install.packages(new.pkg, dependencies = TRUE)
+  sapply(pkg, require, character.only = TRUE)
+} 
+
+packages <- c("knitr","kableExtra","rmdformats","rmarkdown","dplyr","here","reshape2","deSolve","RefManageR","fitdistrplus","ggplot2","scales","ggthemes")
+
+load(packages)
+
+library.dir   <- "Library/"
+source(file.path(library.dir, "library.R"))
+
+### Specify directories 
+input.dir <- "Inputs/"
+output.dir <- "Outputs/"
+```
+
+# Assignment
+
+The Equations describing the Lotka-Volterra predator-prey model are $$\dot{x}=rx(1-x/K)-\alpha xy,$$ and $$\dot{y}=\alpha\gamma xy-\mu y.$$
+
+Using the following parameters $\alpha=0.2$, $r=1$, $\mu=0.2$, and $\gamma=0.5$
+
+1.  Generate plots of $x$ and $y$ vs. $t$ for the three cases where $K=10$, $K=1$ and $K=\infty$.
+
+2.  Generate the corresponding three Phase-plane plots of the Lotka-Volterra predator-prey model.
+
+3.  The Nullclines can be found by setting $\dot{x}=0$ and $\dot{y}=0$. Find and plot the nullclines in the phase-plane, and find the fixed points.
+
+4.  Construct the Jacobian matrix $J$ and evaluate it at the fixed point.
+
+5.  For the case where $K=10$, find its eigenvalues.
+
+Refer to the past example Notebooks for help.
+
+# 1. Generating plots of x and y vs. t
+
+## Model specification
+
+First, we can specify the model as a function that takes time ($t$), the per-capita growth rate ($r$), the prey per-capita death rate ($\mu$), the rate of predation upon the prey ($\alpha$), the predator's metabolization of prey ($\gamma$), and carrying capacity ($K$). For the case when $K=\infty$, the equation describing change in predators becomes $$\dot{x}=rx-\alpha xy,$$ so we add a conditional statement to reflect this.
+
+```{r echo=TRUE}
+# Specify the Lotka-Volterra model of Predation equations
+Lotka<-function(t,N,pars){
+ if (K=="inf") {
+ dN1 <- r*N[1]-alf*N[1]*N[2]              # prey when K = inf
+ } else {
+ dN1 <- r*N[1]*(1-N[1]/K)-alf*N[1]*N[2]   # prey when K != inf
+ }
+  
+ dN2 <- alf*gam*N[1]*N[2]-mu*N[2]         # predators
+
+ list(c(dN1, dN2))                        # the rate of change
+}
+```
+
+## Plotting function
+
+As we want to add several model trajectories using the same parameter values, but different initial conditions of the state variables, we define a function called *trajectory.Lotka* that performs each run and plots both the lines and the arrows. The model is solved using the integration routine ode, from library deSolve.\
+
+```{r echo=TRUE}
+# Create a trajectory plotting function.
+trajectory.Lotka <- function(N1,N2,K,t=30,dt=0.1,ds=0.1,type="l",lwd= 2,color="black",xlim=c(0,15),ylim=c(0,15),phase=FALSE,new=FALSE)
+{
+  K <<- K # create global K parameter
+  times  <-seq(0,t,dt)
+  state  <-c(N1 = N1, N2 = N2)
+  out    <- as.data.frame(ode(state,times,Lotka,0))
+  
+  if (K == "inf") {K_ch = "\u221e"} else {K_ch <- as.character(K)}
+  
+  # for plotting phase plane
+  if (phase) {
+    
+    if (new) { 
+      graph_head <- substitute(bold("Predator-prey Phase Plane "~"("~italic("K")~" = "~K_ch~")"))
+      plot (out$N1,out$N2,type="l",col=color,lwd=lwd, xlim=xlim,ylim=ylim,xlab="Prey (N1)", ylab="Predator (N2)",main=graph_head)
+    } else {
+      lines (out$N1,out$N2,type="l",col=color,lwd=lwd)
+    }
+    
+    tarrows(out,ds,color,lwd=lwd)
+  
+  # for plotting x and y vs. t  
+  } else {
+    graph_head <- substitute(bold(italic("x")~" and "~italic("y")~" vs. "~italic("t")~" ("~italic("K")~" = "~K_ch~")"))
+    plot (out$time,out$N1,type="l",col="blue",lwd=lwd, xlim=c(0,30),ylim=c(0,15), xlab="Time", ylab="Population", main=graph_head)
+    lines (out$time,out$N2,type="l",col="red",lwd=lwd)
+    legend("topright", legend = c("Prey (N1)", "Predator (N2)"), col = c("blue", "red"), lty = 1)
+  }
+}
+```
+
+We first define the parameter values to be used. Note we are using these as global parameters. Alternatively, they could be passed locally to the function *trajectory.Lotka*.
+
+```{r echo=TRUE}
+r    <- 1 
+alf <- 0.2
+gam <- 0.5
+mu <- 0.2
+```
+
+## Plots
+
+Next we create the plots for $K=10$, $K=1$, and $K=\infty$.
+
+```{r echo=TRUE}
+trajectory.Lotka (10, 10, K=10)
+trajectory.Lotka (10, 10, K=1)
+trajectory.Lotka (10, 10, K="inf")
+```
+
+# 2. Phase-plane plots
+
+We can use the same function *trajectory.Lotka* to create Phase-plane plots of the Lotka-Volterra predator-prey model.
+
+## K = 10
+
+```{r echo=TRUE}
+trajectory.Lotka (10, 10, K=10, phase=TRUE, new=TRUE)
+trajectory.Lotka (6, 9, K=10, phase=TRUE)
+trajectory.Lotka (7, 4, K=10, phase=TRUE)
+trajectory.Lotka (2, 3, K=10, phase=TRUE)
+trajectory.Lotka (0, 0, K=10, phase=TRUE)
+```
+
+## K = 1
+
+```{r echo=TRUE}
+trajectory.Lotka (10, 10, K=1, phase=TRUE, new=TRUE)
+trajectory.Lotka (6, 9, K=1, phase=TRUE)
+trajectory.Lotka (7, 4, K=1, phase=TRUE)
+trajectory.Lotka (2, 3, K=1, phase=TRUE)
+trajectory.Lotka (0, 0, K=1, phase=TRUE)
+```
+
+## K = $\infty$
+
+```{r echo=TRUE}
+trajectory.Lotka (10, 10, K="inf", phase=TRUE, new=TRUE)
+trajectory.Lotka (6, 9, K="inf", phase=TRUE)
+trajectory.Lotka (7, 4, K="inf", phase=TRUE)
+trajectory.Lotka (2, 3, K="inf", phase=TRUE)
+trajectory.Lotka (0, 0, K="inf", phase=TRUE)
+
+```
+
+# 3. Nullclines
+
+## Solving for nullclines
+
+To find the nullclines, we set $\dot{x}=0$ and $\dot{y}=0$.
+
+From the first equation: \begin{align*}
+  0 &= rx\big(1-\frac{x}{K}\big)-\alpha xy \\[0.5 em]
+  \alpha xy &= rx\big(1-\frac{x}{K}\big) \\[0.5 em]
+  y &= \frac{r}{\alpha}\Big(1-\frac{x}{K}\Big)\,\,\textbf{  or  }\,\, x = 0
+\end{align*}
+
+From the second equation: \begin{align*}
+  0&=\alpha\gamma xy-\mu y \\[0.4 em]
+  \mu y &= \alpha\gamma xy \\[0.4 em]
+  x &= \frac{\mu}{\alpha\gamma} \, \, \textbf{ or } \, \, y = 0
+\end{align*}
+
+Therefore, the nullclines are:
+
+1.  $\dot{x}=0\Rightarrow$ $x=0$ or $y=\frac{r}{\alpha}(1-\frac{x}{K})$
+2.  $\dot{y}=0\Rightarrow$ $y=0$ or $x=\frac{\mu}{\alpha\gamma}$ \newline
+
+## Plotting nullclines
+
+The only nullcline which is a function of at least least two of our variables is $y=\frac{r}{\alpha}(1-\frac{x}{K})$. We can plot it for each of the $K$ values with the following code.
+
+```{r echo=TRUE}
+# Nullcline 1
+Ax  <- c(0,100)
+Ay  <- (gam/alf)*(1-Ax)
+xlim <-  range(Ax)
+ylim <-  range(Ay)
+
+plot(x=Ax,y=Ay, type="l", lwd=3, 
+     main="Nullcline 1",
+       xlab="x",ylab="y",xlim=c(0,100),ylim=c(0,3))
+text(4,0,"K=1")
+
+for (i in seq(10, 90, by = 20)) {
+  Ay <- (gam/alf)*(1-(Ax/i))
+  lines(x=Ax,y=Ay, lwd=3)
+  label <- paste0("K=",i)
+  text(1.02*i+4,0,label)
+}
+```
+
+When $K=1$, the predator-prey phase plane with the nullcline in blue looks like this.
+
+```{r echo=FALSE}
+trajectory.Lotka (10, 10, K=1, phase=TRUE, new=TRUE, lwd=2, xlim=c(0,12), ylim=c(0,12))
+trajectory.Lotka (6, 9, K=1, phase=TRUE, lwd=2)
+trajectory.Lotka (7, 4, K=1, phase=TRUE, lwd=2)
+trajectory.Lotka (2, 3, K=1, phase=TRUE, lwd=2)
+Ax  <- c(-100,100)
+Ay  <- (gam/alf)*(1-Ax)
+xlim <-  range(Ax)
+ylim <-  range(Ay)
+
+lines(x=Ax,y=Ay,lwd=4, lty=2, col="blue")
+```
+
+## Fixed points
+
+The fixed points (when $\dot{x}=0$ and $\dot{y}=0$) can be found by setting the conditions equal to each other.
+
+1.  $\dot{x}=0$ when $y=\frac{r}{\alpha}(1-\frac{x}{K})$ and $\dot{y}=0$ when $y=0$
+
+```{=tex}
+\begin{align*}
+  0&=\frac{r}{\alpha}\Big(1-\frac{x}{K}\Big) \\[0.4 em]
+  x&=K
+\end{align*}
+```
+2.  $\dot{x}=0$ when $y=\frac{r}{\alpha}(1-\frac{x}{K})$ and $\dot{y}=0$ when $x=\frac{\mu}{\alpha\gamma}$
+
+```{=tex}
+\begin{align*}
+  y&=\frac{r}{\alpha}\bigg(1-\frac{\big(\frac{\mu}{\alpha\gamma}\big)}{K}\bigg)\\
+  &=\frac{r}{\alpha}\Big(1-\frac{\mu}{\alpha\gamma K}\Big)
+\end{align*}
+```
+Therefore, there are three fixed points. The code below gives the x and y coordinates of the fixed points in vectors X and Y respectively.
+
+```{r echo=TRUE}
+  # for the case when K = 10
+  K <- 10
+
+  # 3 equilibrium points
+  X <- c(0, K, mu/(alf*gam) )
+  Y <- c(0, 0, (r/alf)*(1 - mu/(alf*gam*K)) )
+```
+
+# 4. Jacobian Matrix
+
+## Linear stability analysis
+
+To evaluate the model at the fixed points, we can construct the Jacobian matrix.
+
+The Jacobian is given by $$J= \left . \left( \begin{array}{cc} r(1-\frac{2x}{K})-\alpha y& -\alpha x \\
+\alpha \gamma y & \alpha \gamma x - \mu
+\end{array} \right)\right |_{(x^*,y^*)}$$
+
+For the fp (0, 0), the Jacobian is 
+$$J= \left( \begin{array}{cc} r& 0 \\
+0 & - \mu
+\end{array} \right)$$
+
+For the fp (K, 0), the Jacobian is 
+$$J= \left( \begin{array}{cc} -r& -\alpha K \\
+0 & \alpha \gamma K 
+\end{array} \right)$$
+
+For the fp ($\frac{\mu}{\alpha\gamma}$, $\frac{r}{\alpha}(1-\frac{\mu}{\alpha\gamma K})$), the Jacobian is
+$$J= \left( \begin{array}{cc} -\frac{\mu r}{\alpha\gamma K}& -\frac{\mu}{\gamma} \\
+r \big(\gamma-\frac{ \mu}{\alpha K}\big) & 0 
+\end{array} \right)$$
+
+# 5. Finding eigenvalues
+
+Evaluating the Jacobian at each fixed point and finding its eigenvalues would provide the stability and classification of each fixed point. This can be done analytically, but it is easier to use the *jacobian.full* built-in R function to estimate the matrix numerically.
+
+## Numeric matrix estimation
+
+The code below loops through the 3 fixed points, and calculates the Jacobian. It then invokes R's function *eigen*, which estimates both the two eigenvalues and this matrix's two eigenvectors. We require only the eigenvalues (*lambda*). Based on the eigenvalues' signs and imaginary parts, we determine if it is stable node, unstable node, saddle, stable focal, or unstable focal.
+
+```{r echo=TRUE}
+# Jacobian matrix, and eigenvalues
+ei    <- matrix(nrow=3,ncol=2)
+fp.type<-NULL
+for (i in 1:3)   # for each root
+{
+ # jacobian matrix
+ N1 = X[i]
+ N2 = Y[i]
+ Jacob <- rootSolve::jacobian.full(y=c(N1,N2),func=Lotka)
+
+ # eigenvalues
+ ei[i,]   <- eigen(Jacob)$values
+ 
+ # white:unstable node, black:stable node, grey:saddle
+ if (is.complex(ei[i,1]) || is.complex(ei[i,2])){
+   
+ if (sign(Re(ei[i,1]))>0 & sign(Re(ei[i,2]))>=0) {fp.tmp <- "unstable focal"}
+ if (sign(Re(ei[i,1]))<0 & sign(Re(ei[i,2]))<=0) {fp.tmp <- "stable focal"} 
+   
+ } else {
+   
+ if (sign(ei[i,1])>0 & sign(ei[i,2])>=0) {fp.tmp <- "unstable node"}
+ if (sign(ei[i,1])<0 & sign(ei[i,2])<=0) {fp.tmp <- "stable node"} 
+ if (sign(ei[i,1])* sign(ei[i,2])   <0 ) {fp.tmp <- "saddle node"}
+   
+ }
+ fp.type<- c(fp.type,fp.tmp)
+}
+fp<-cbind.data.frame(N1=X,N2=Y,lambda=ei,fp.type=fp.type)
+
+print(fp)
+```
+
+## Eigenvalues
+
+Therefore, for the fixed point (0,0), the eigenvalues are $\lambda = 1$ and $\lambda = -0.2$, so it is a saddle node.
+
+For the fixed point (K, 0), the eigenvalues are $\lambda = -1$ and $\lambda = 0.8$, so it is a saddle node.
+
+Fo the fixed point ($\frac{\mu}{\alpha\gamma}$, $\frac{r}{\alpha}(1-\frac{\mu}{\alpha\gamma K})$), the eigenvalues are $\lambda\approx -0.1 + 0.39i$ and $\lambda\approx -0.1 - 0.39i$, so it is a stable focal point.
